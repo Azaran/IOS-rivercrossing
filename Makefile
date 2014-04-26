@@ -1,6 +1,7 @@
 CC=gcc
 CFLAGS=-std=gnu99 -Wall -Wextra -Werror -pedantic
+OBJ=main.c
 
 
-rivercrossing: 
-	     $(CC) -o rivercrossing hellomake.o hellofunc.o $(CFLAGS)
+main: 
+	     $(CC) -o rivercrossing $(OBJ) $(CFLAGS)
