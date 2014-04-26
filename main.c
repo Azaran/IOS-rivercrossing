@@ -18,8 +18,11 @@
 #include <fcntl.h>
 #include <string.h>
 
+void catHackers(int ammount, int delay);
+void catSerfs(int ammount, int delay);
 int verifyArg(int argc, char **argv);
 int outputMsg(int argc, char **argv);
+
 int main(int argc, char **argv)
 {
     int msg_code;
@@ -27,9 +30,39 @@ int main(int argc, char **argv)
         return 1;
     else if (msg_code < 0)
         return 0;
+    pid_t child[2] = {1,1};
+    child[0] = fork();
+    if (child[0] == 0)
+    {
+        catHackers(atoi(argv[1]),atoi(argv[2]));
+        child[0]++;
+    }    
+    else
+        child[1] = fork();
+    if (child[1] == 0)
+        catSerfs(atoi(argv[1]),atoi(argv[3]));
+
     return 0;
     
     
+}
+void catHackers(int ammount, int delay)
+{
+    int i =0;
+    for(i = 0; i < ammount; i++)
+    {
+        printf("H: %d\n ",i);
+        usleep(delay);
+    }
+}
+void catSerfs(int ammount, int delay)
+{
+    int i =0;
+    for(i = 0; i < ammount; i++)
+    {
+        printf("S: %d\n",i*10);
+        usleep(delay);
+    }
 }
 int outputMsg(int argc, char **argv)
 {
