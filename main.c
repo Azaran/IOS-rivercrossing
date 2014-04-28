@@ -17,24 +17,32 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <string.h>
+#include <sys/mman.h>
+#define OUT_FILE "./rivercrossing.out"
 
 typedef struct sh_var{ // struct for saving id of shvar and pointer to data
     int shmid;
     int *data;
 } sh_var;
 
-void catHackers(int ammount, int delay);
-void catSerfs(int ammount, int delay);
+void catHackers(char *path, int ammount, int delay, sem_t **out);
+void catSerfs(char *path, int ammount, int delay, sem_t **out);
+void errexit(char *func_err);
 int verifyArg(int argc, char **argv);
 int outputMsg(int argc, char **argv);
 void makeShVar(char *path, char id, int size, int rights, sh_var *shvar);
 void removeShVar(sh_var *shvar, int parent);
 
+
 int main(int argc, char **argv)
 {
     int msg_code;
     int status[2];
-
+    FILE *output_f = fopen(OUT_FILE,"w");
+    fclose(output_f);
+    sem_t *out[2];
+    out[0] = sem_open("/xvecer18_out0", O_CREAT | O_EXCL, 0644, 0);
+    out[1] = sem_open("/xvecer18_out1", O_CREAT | O_EXCL, 0644, 0);
     if ((msg_code = outputMsg(argc, argv)) > 0)
         return 1;
     else if (msg_code < 0)
@@ -42,115 +50,103 @@ int main(int argc, char **argv)
     sh_var count;
     count.data = NULL;
     count.shmid = 0;
-    //////printf("1\n");
-    makeShVar("/tmp", 'V', 2048, 0600, &count);
+    makeShVar(argv[0], 'V', 2048, 0600, &count);
     *(count.data) = 0;
-    //printf("2\n");
     printf("count: %d\n",*(count.data));
-    //printf("15\n");
     pid_t child[2] = {1,1};
     child[0] = fork();
     
-    //printf("13\n");
     if (child[0] == 0)
     {
-        catHackers(atoi(argv[1]),atoi(argv[2]));
-    //printf("14\n");
+        catHackers(argv[0], atoi(argv[1]), atoi(argv[2]),out);
         child[0]++;
     }    
     else
         child[1] = fork();
     
     if (child[1] == 0)
-        catSerfs(atoi(argv[1]),atoi(argv[3]));
+        catSerfs(argv[0], atoi(argv[1]), atoi(argv[3]),out);
     else
     {
         waitpid(child[1],&status[1],0);
         waitpid(child[0],&status[0],0);
     }
     removeShVar(&count,1);
+    sem_close(out[0]);
+    sem_close(out[1]);
+    sem_unlink("/xvecer18_out0");
+    sem_unlink("/xvecer18_out1");
     return 0;
     
 }
 
-void catHackers(int ammount, int delay)
+void catHackers(char *path, int ammount, int delay, sem_t **out)
 {
     sh_var count;
-    makeShVar("/tmp",'V', 2048, 0600, &count);
-
-    //printf("3\n");
-    for (count.data = count.data; *(count.data) < ammount; (*(count.data))++)
+    makeShVar(path, 'V', 2048, 0600, &count);
+    FILE *output_f;
+    sem_post(out[1]);
+    for (; *(count.data) < ammount;)
     {
-        printf("H: %d\n ",*(count.data));
+        sem_wait(out[0]);
+        output_f = fopen(OUT_FILE,"a");
+        fprintf(output_f,"H: %d\n",(*(count.data))++);
+        fclose(output_f);
+        sem_post(out[1]);
         usleep(delay);
     }
-    //printf("4\n");
+    sem_close(out[0]);
+    sem_close(out[1]);
     removeShVar(&count,0);
     exit(0);
-    //printf("5\n");
 }
 
-void catSerfs(int ammount, int delay)
+void catSerfs(char *path, int ammount, int delay, sem_t **out)
 {
-    key_t key;
-    key = ftok("/tmp",'V');
-    int shmid;
-    int *count;
-    shmid = shmget(key, 1024, 0600);
-    count = shmat(shmid, NULL, 0);
-    //printf("6\n");
-    for (*count = *count; *count < ammount; *count= *count+1)
+    sh_var count;
+    makeShVar(path, 'V', 2048, 0600, &count);
+    FILE *output_f;
+    for (; *(count.data) < ammount;)
     {
-        printf("S: %d\n",*count*10);
+        sem_wait(out[1]);
+        output_f = fopen(OUT_FILE,"a");
+        fprintf(output_f,"S: %d\n",(*(count.data))++);
+        fclose(output_f);
+        sem_post(out[0]);
         usleep(delay);
     }
-    //printf("7\n");
-    shmdt(count);
+    sem_close(out[0]);
+    sem_close(out[1]);
+    removeShVar(&count,0);
     exit(0);
 }
-
+void errexit(char *func_err)
+{
+    errexit(func_err);
+    exit(2);
+}
 void makeShVar(char *path, char id, int size, int rights, sh_var *shvar)
 {
     key_t key;
     if ((key = ftok(path,id)) == -1)
-    {
-        perror("ftok");
-        exit(2);
-    }
+        errexit("ftok");
    
-    //printf("8\n");
     if ((shvar->shmid = shmget(key, size, rights | IPC_CREAT)) == -1)
-    {
-        perror("shmget");
-        exit(2);
-    }
+        errexit("shmget");
     
-    //printf("9\n");
     if (*(shvar->data = shmat(shvar->shmid, NULL, 0)) == -1)
-    {
-        perror("shmat");
-        exit(2);
-    }
-    //printf("10\n");
+        errexit("shmat");
 }
 
 void removeShVar(sh_var *shvar, int parent)
 {
     if ((shmdt(shvar->data)) == -1)
-    {
-        perror("shmdt");
-        exit(2);
-    }
+        errexit("shmdt");
     
-    //printf("11\n");
     if (parent == 1)
     {
         if ((shmctl(shvar->shmid,IPC_RMID, NULL)) == -1)
-        {
-            perror("shmctl");
-            exit(2);
-        }
-        printf("12\n");
+            errexit("shmctl");
     }
 }
 
@@ -165,7 +161,6 @@ int outputMsg(int argc, char **argv)
                  "     S - maximal time between creating of two serf processes (in miliseconds), 0 - 5001\n"
                  "     R - maximal time used by boat to reach other side of the river (in miliseconds), 0 - 5001\n"
                  " All parameters are represented as integers!\n";
-
     int err_code;
     
     if ((err_code = verifyArg(argc,argv)) != 0)
