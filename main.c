@@ -18,6 +18,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <time.h>
 #define OUT_FILE "./rivercrossing.out"
 
 typedef struct sh_var{ // struct for saving id of shvar and pointer to data
@@ -25,11 +26,13 @@ typedef struct sh_var{ // struct for saving id of shvar and pointer to data
     int *data;
 } sh_var;
 
+
 void catHackers(char *path, int ammount, int delay, sem_t **out);
 void catSerfs(char *path, int ammount, int delay, sem_t **out);
 void errexit(char *func_err);
 int verifyArg(int argc, char **argv);
 int outputMsg(int argc, char **argv);
+int randomN(int max);
 void makeShVar(char *path, char id, int size, int rights, sh_var *shvar);
 void removeShVar(sh_var *shvar, int parent);
 
@@ -93,7 +96,7 @@ void catHackers(char *path, int ammount, int delay, sem_t **out)
         fprintf(output_f,"H: %d\n",(*(count.data))++);
         fclose(output_f);
         sem_post(out[1]);
-        usleep(delay);
+        usleep(randomN(delay));
     }
     sem_close(out[0]);
     sem_close(out[1]);
@@ -113,18 +116,26 @@ void catSerfs(char *path, int ammount, int delay, sem_t **out)
         fprintf(output_f,"S: %d\n",(*(count.data))++);
         fclose(output_f);
         sem_post(out[0]);
-        usleep(delay);
+        usleep(randomN(delay));
     }
     sem_close(out[0]);
     sem_close(out[1]);
     removeShVar(&count,0);
     exit(0);
 }
+
+int randomN(int max)
+{
+    srand(time(NULL));
+    return (rand()%max);
+}
+
 void errexit(char *func_err)
 {
     errexit(func_err);
     exit(2);
 }
+
 void makeShVar(char *path, char id, int size, int rights, sh_var *shvar)
 {
     key_t key;
