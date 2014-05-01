@@ -18,18 +18,27 @@
 #include <fcntl.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <limits.h>
 #include <time.h>
 #define OUT_FILE "./rivercrossing.out"
 
+typedef struct numbers{ //struct for shared data
+    int count;
+    int hackers;
+    int serfs;
+} numbers;
+
 typedef struct sh_var{ // struct for saving id of shvar and pointer to data
     int shmid;
-    int *data;
+    numbers *data;
 } sh_var;
 
-void processH(int hid, sem_t **out, sh_var *count);
-void processS(int sid, sem_t **out, sh_var *count);
-void catHackers(int ammount, int delay, sem_t **out, sh_var *count);
-void catSerfs(int ammount, int delay, sem_t **out, sh_var *count);
+
+
+void processH(int hid, sem_t **sem, sh_var *shvar);
+void processS(int sid, sem_t **sem, sh_var *shvar);
+void catHackers(int ammount, int delay, sem_t **sem, sh_var *shvar);
+void catSerfs(int ammount, int delay, sem_t **sem, sh_var *shvar);
 void errexit(char *func_err);
 int verifyArg(int argc, char **argv);
 int outputMsg(int argc, char **argv);
@@ -46,67 +55,69 @@ int main(int argc, char **argv)
     int status[2];
     FILE *output_f = fopen(OUT_FILE,"w");
     fclose(output_f);
-    sem_t *out[2];
+    sem_t *sem[2];
     srand(time(NULL));
-    out[0] = sem_open("/xvecer18_out0", O_CREAT | O_EXCL, 0644, 0);
-    out[1] = sem_open("/xvecer18_out1", O_CREAT | O_EXCL, 0644, 0);
+    sem[0] = sem_open("/xvecer18_out0", O_CREAT | O_EXCL, 0644, 0);
+    sem[1] = sem_open("/xvecer18_out1", O_CREAT | O_EXCL, 0644, 0);
     if ((msg_code = outputMsg(argc, argv)) > 0)
         return 1;
     else if (msg_code < 0)
         return 0;
-    sh_var count;
-    count.data = NULL;
-    count.shmid = 0;
-    makeShVar(argv[0], 'V', 4096, 0600, &count);
-    initShVar(&count);
-    *(count.data) = 1;
+    sh_var shvar;
+    shvar.data = NULL;
+    shvar.shmid = 0;
+    makeShVar(argv[0], 'V', sizeof(numbers), 0600, &shvar);
+    initShVar(&shvar);
+    shvar.data->count = 1;
+    shvar.data->hackers = 0;
+    shvar.data->serfs = 0;
     pid_t child[2] = {1,1};
     child[0] = fork();
     
     if (child[0] == 0)
     {
-        catHackers(atoi(argv[1]), atoi(argv[2]), out, &count);
+        catHackers(atoi(argv[1]), atoi(argv[2]), sem, &shvar);
         child[0]++;
     }    
     else
         child[1] = fork();
     
     if (child[1] == 0)
-        catSerfs(atoi(argv[1]), atoi(argv[3]), out, &count);
+        catSerfs(atoi(argv[1]), atoi(argv[3]), sem, &shvar);
     else
     {
         waitpid(child[1],&status[1],0);
         waitpid(child[0],&status[0],0);
     }
-    dtShVar(&count);
-    removeShVar(&count);
-    sem_close(out[0]);
-    sem_close(out[1]);
+    dtShVar(&shvar);
+    removeShVar(&shvar);
+    sem_close(sem[0]);
+    sem_close(sem[1]);
     sem_unlink("/xvecer18_out0");
     sem_unlink("/xvecer18_out1");
     return 0;
     
 }
 
-void catHackers(int ammount, int delay, sem_t **out, sh_var *count)
+void catHackers(int ammount, int delay, sem_t **sem, sh_var *shvar)
 {
     int h;
     pid_t pidH[ammount]; 
     int status[ammount];
     int rantime; 
-    initShVar(count);
-    sem_post(out[0]);
+    initShVar(shvar);
+    sem_post(sem[0]);
     for (h=1; h <= ammount; h++)
     {
         pidH[h] = fork();
         if (pidH[h] > 0)
         {
             rantime = randomN(delay);
-            printf("H sleeping for %d\n",rantime);
+      //      printf("H sleeping for %d\n",rantime);
             usleep(rantime);
         }
         else
-            processH(h, out, count);
+            processH(h, sem, shvar);
     }
 
     for (h=1; h <= ammount; h++)
@@ -114,44 +125,61 @@ void catHackers(int ammount, int delay, sem_t **out, sh_var *count)
         waitpid(pidH[h],&status[h],0);
     }
         
-    sem_close(out[0]);
-    dtShVar(count);
+    sem_close(sem[0]);
+    dtShVar(shvar);
     exit(0);
 }
 
-void processH(int hid, sem_t **out, sh_var *count)
+void processH(int hid, sem_t **sem, sh_var *shvar)
 {
-    sem_wait(out[0]);
-    initShVar(count);
     FILE *output_f;
+    sem_wait(sem[0]);
+    initShVar(shvar);
     output_f = fopen(OUT_FILE,"a");
-    fprintf(output_f,"%d : H: %d\n", (*(count->data))++,hid);
+    fprintf(output_f,"%d: hacker : %d : started\n", (shvar->data->count)++,hid);
     fclose(output_f);
-    sem_post(out[1]);
-    sem_close(out[0]);
-    sem_close(out[1]);
-    dtShVar(count);
+    sem_post(sem[0]);
+    sem_wait(sem[0]);
+    output_f = fopen(OUT_FILE,"a");
+    fprintf(output_f,"%d: hacker : %d : waiting for boarding : %d : %d\n",(shvar->data->count)++,hid,++(shvar->data->hackers),(shvar->data->serfs));
+    fclose(output_f);
+    if ((shvar->data->hackers + shvar->data->serfs) >= 4)
+    {
+        output_f = fopen(OUT_FILE,"a");
+        fprintf(output_f,"%d: hacker : %d : captain\n",(shvar->data->count)++,hid);
+        fclose(output_f);
+        if (shvar->data->hackers >= 2 && shvar->data->serfs >= 2)
+        {
+            shvar->data->hackers -= 2;
+            shvar->data->serfs -= 2;
+        }
+        else if (shvar->data->hackers == 4)
+            shvar->data->hackers -= 4;
+    }
+    sem_post(sem[0]);
+    sem_close(sem[0]);
+    dtShVar(shvar);
     exit(0);
 }
 
-void catSerfs(int ammount, int delay, sem_t **out, sh_var *count)
+void catSerfs(int ammount, int delay, sem_t **sem, sh_var *shvar)
 {
     int s;
     pid_t pidS[ammount];
     int status[ammount];
     int rantime;
-    initShVar(count);
+    initShVar(shvar);
     for (s=1; s <= ammount; s++)
     {
         pidS[s] = fork();
         if (pidS[s] > 0)
         {
             rantime = randomN(delay);
-            printf("S sleeping for %d\n",rantime);
+    //        printf("S sleeping for %d\n",rantime);
             usleep(rantime);
         }
         else
-            processS(s, out, count);
+            processS(s, sem, shvar);
     }
     
     for (s=1; s <= ammount; s++)
@@ -159,25 +187,47 @@ void catSerfs(int ammount, int delay, sem_t **out, sh_var *count)
         waitpid(pidS[s],&status[s],0);
     }
     
-    dtShVar(count);
+    dtShVar(shvar);
     exit(0);
 }
 
-void processS(int sid, sem_t **out, sh_var *count)
+void processS(int sid, sem_t **sem, sh_var *shvar)
 {
-    initShVar(count);
     FILE *output_f;
-    sem_wait(out[1]);
+    initShVar(shvar);
+    sem_wait(sem[0]);
     output_f = fopen(OUT_FILE,"a");
-    fprintf(output_f,"%d : S : %d\n",(*(count->data))++,sid);
+    fprintf(output_f,"%d: serf : %d : started\n",(shvar->data->count)++,sid);
     fclose(output_f);
-    sem_post(out[0]);
-    sem_close(out[0]);
-    sem_close(out[1]);
-    dtShVar(count);
+    sem_post(sem[0]);
+    sem_wait(sem[0]);
+    output_f = fopen(OUT_FILE,"a");
+    fprintf(output_f,"%d: serf : %d : waiting for boarding : %d : %d\n",(shvar->data->count)++,sid,(shvar->data->hackers),++(shvar->data->serfs));
+    fclose(output_f);
+    if ((shvar->data->hackers + shvar->data->serfs) >= 4)
+    {
+        output_f = fopen(OUT_FILE,"a");
+        fprintf(output_f,"%d: serf : %d : captain\n",(shvar->data->count)++,sid);
+        fclose(output_f);
+        if (shvar->data->hackers >= 2 && shvar->data->serfs >= 2)
+        {
+            shvar->data->hackers -= 2;
+            shvar->data->serfs -= 2;
+        }
+        else if (shvar->data->serfs == 4)
+            shvar->data->serfs -= 4;
+    }
+    sem_post(sem[0]);
+    sem_close(sem[0]);
+    dtShVar(shvar);
     exit(0);
 }
+/*
+void semFprintf(char *text)
+{
 
+}
+*/
 int randomN(int max)
 {
     return (rand()%max);
@@ -202,20 +252,20 @@ void initShVar(sh_var *shvar)
 {
     if ((shvar->data = shmat(shvar->shmid, NULL, 0)) == (void *) -1)
         errexit("shmat");
-    printf("init: %lu\n",(long)shvar->data);
+    //printf("init: %lu\n",(long)shvar->data);
 }
 
 void dtShVar(sh_var *shvar)
 {
     if ((shmdt(shvar->data)) == -1)
         errexit("shmdt");
-    printf("end: %lu\n",(long)shvar->data);
+    //printf("end: %lu\n",(long)shvar->data);
 }
 void removeShVar(sh_var *shvar)
 {
     if ((shmctl(shvar->shmid,IPC_RMID, NULL)) == -1)
         errexit("shmctl");
-    printf("rusim shmid %d\n",shvar->shmid);
+    //printf("rusim shmid %d\n",shvar->shmid);
 }
 
 
