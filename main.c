@@ -20,6 +20,7 @@
 #include <sys/mman.h>
 #include <limits.h>
 #include <time.h>
+#include <errno.h>
 #define OUT_FILE "./rivercrossing.out"
 #define SEMNUM 8 
 
@@ -89,41 +90,45 @@ int main(int argc, char **argv)
     shvar.data->hdelay = atoi(argv[2]);
     shvar.data->sdelay = atoi(argv[3]);
     shvar.data->bdelay = atoi(argv[4]);
-    file  = fopen(OUT_FILE,"w");
+    if ((file  = fopen(OUT_FILE,"w")) == NULL)
+        errexit("fopen");
     shvar.data->file = file;
     pid_t child[2] = {1,1};
-    sem_post(sem[1]);
-    child[0] = fork();
-    
+    sem_post(sem[1]);           //enable access to platform 
+    if((child[0] = fork()) == -1)
+        errexit("fork");
     if (child[0] == 0)
     {
         catHackers(sem, &shvar);
         child[0]++;
     }    
     else
-        child[1] = fork();
-    
+        if((child[1] = fork()) == -1)
+            errexit("fork");
     if (child[1] == 0)
         catSerfs(sem, &shvar);
     else
     {
         waitpid(child[1],&status[1],0);
         waitpid(child[0],&status[0],0);
-    }
+   }
     dtShVar(&shvar);
     removeShVar(&shvar);
     
     for (i = 0; i < SEMNUM; i++)
     {
-        sem_close(sem[i]);
-        sem_unlink(sems[i]);
+        if (sem_close(sem[i]) == -1)
+            errexit("sem_close");
+        if (sem_unlink(sems[i]) == -1)
+            errexit("sem_unlink");
     }
-    fclose(file);
+    if (fclose(file) == EOF)
+        errexit("fclose");
     return 0;
     
 }
 
-void catHackers(sem_t **sem, sh_var *shvar)
+void catHackers(sem_t **sem, sh_var *shvar)     // parent process for hackers
 {
     int h;
     pid_t pidH[shvar->data->size_categ]; 
@@ -131,20 +136,20 @@ void catHackers(sem_t **sem, sh_var *shvar)
     int rantime; 
     attachShVar(shvar);
     sem_post(sem[0]);
-    for (h=1; h <= shvar->data->size_categ; h++)
+    for (h=1; h <= shvar->data->size_categ; h++) // make size_categ * hacker 
     {
         pidH[h] = fork();
-        if (pidH[h] > 0)
+        if (pidH[h] > 0)                // parent process
         {
             rantime = randomN(shvar->data->hdelay);
       //      printf("H sleeping for %d\n",rantime);
-            usleep(rantime);
+            usleep(rantime);                    // delay hacker processes
         }
-        else
+        else                            // child process
             processH(h, sem, shvar);
     }
 
-    for (; h >= 1; h--)
+    for (; h >= 1; h--)             // good parents are always waiting for their childs
     {
         waitpid(pidH[h],&status[h],0);
     }
@@ -198,9 +203,9 @@ void processH(int id, sem_t **sem, sh_var *shvar)
         sem_wait(sem[0]);
         statusMsg(id, 0, CAPT, shvar); 
         sem_post(sem[0]);
-        for (i = 0; i<3; i++)
+        for (i = 0; i<3; i++)       // wait for everybody to get on the boat
             sem_wait(sem[6]);
-        usleep(randomN(shvar->data->bdelay));
+        usleep(randomN(shvar->data->bdelay)); // wake me up when we are on the other side guys
         sem_post(sem[5]);
     }
     else
@@ -216,7 +221,7 @@ void processH(int id, sem_t **sem, sh_var *shvar)
 
     sem_wait(sem[0]);
     statusMsg(id, 0, LAND, shvar); 
-    (shvar->data->landed)++;
+    (shvar->data->landed)++;  
     sem_post(sem[0]);
     
     if (shvar->data->landed % 4 == 0) 
@@ -226,7 +231,7 @@ void processH(int id, sem_t **sem, sh_var *shvar)
     }
     if (shvar->data->landed == (2*shvar->data->size_categ))
         sem_post(sem[7]);
-    sem_wait(sem[7]);     // everybody here? Ok, lets finish
+    sem_wait(sem[7]);     // everybody here? Ok, lets finish our trip
     sem_post(sem[7]);
     
     sem_wait(sem[0]);
@@ -239,27 +244,27 @@ void processH(int id, sem_t **sem, sh_var *shvar)
     exit(0);
 }
 
-void catSerfs(sem_t **sem, sh_var *shvar)
+void catSerfs(sem_t **sem, sh_var *shvar)   // parent process for serfs
 {
     int s;
     pid_t pidS[shvar->data->size_categ];
     int status[shvar->data->size_categ];
     int rantime;
     attachShVar(shvar);
-    for (s=1; s <= shvar->data->size_categ; s++)
+    for (s=1; s <= shvar->data->size_categ; s++)  // make size_categ * serfs 
     {
         pidS[s] = fork();
-        if (pidS[s] > 0)
+        if (pidS[s] > 0)            // parent process
         {
             rantime = randomN(shvar->data->sdelay);
     //        printf("S sleeping for %d\n",rantime);
-            usleep(rantime);
+            usleep(rantime);        // delay serf processes 
         }
-        else
+        else                        // child process
             processS(s, sem, shvar);
     }
     
-    for (; s >= 1; s--)
+    for (; s >= 1; s--) // good parents are always waiting for their childs
     {
         waitpid(pidS[s],&status[s],0);
     }
@@ -273,8 +278,8 @@ void processS(int id, sem_t **sem, sh_var *shvar)
     attachShVar(shvar);
     int capt = 0;
     int i;
-
-    sem_wait(sem[0]);
+    
+    sem_wait(sem[0]);               
     statusMsg(id, 1, START, shvar); 
     sem_post(sem[0]);
     
@@ -291,7 +296,8 @@ void processS(int id, sem_t **sem, sh_var *shvar)
         shvar->data->boarding = 0;
     }
     else
-        sem_post(sem[1]);        
+        sem_post(sem[1]);       // we need more people!
+
     sem_post(sem[0]);
     
     sem_wait(sem[4]); // can I board as serf?
@@ -301,7 +307,7 @@ void processS(int id, sem_t **sem, sh_var *shvar)
     (shvar->data->boarding)++;
     statusMsg(id, 1, BOARD, shvar); 
     sem_post(sem[0]);
-    if ((shvar->data->boarding) == 4)
+    if ((shvar->data->boarding) == 4)     
         sem_post(sem[2]); 
     
     sem_wait(sem[2]); // everybody boarded? lets asign roles
@@ -313,9 +319,9 @@ void processS(int id, sem_t **sem, sh_var *shvar)
         sem_wait(sem[0]);
         statusMsg(id, 1, CAPT, shvar);
         sem_post(sem[0]);
-        for (i = 0; i<3; i++)
+        for (i = 0; i<3; i++)           // everybody on his place?
             sem_wait(sem[6]);
-        usleep(randomN(shvar->data->bdelay));
+        usleep(randomN(shvar->data->bdelay));  // wake me up when we are on the other side guys 
         sem_post(sem[5]);
     }
     else
@@ -335,7 +341,6 @@ void processS(int id, sem_t **sem, sh_var *shvar)
     sem_post(sem[0]);
     if (shvar->data->landed % 4 == 0) 
     {
-      //  printf("So, Im here your loyal serf");
         sem_post(sem[1]);     // open plaftorm after landing
     }
     if (shvar->data->landed == (2*shvar->data->size_categ))
@@ -360,7 +365,7 @@ int waiting(sh_var *shvar, sem_t **sem)
     int *serfs = &shvar->data->serfs;
     if (((*hackers) + (*serfs)) >= 4)
     {
-        if ((*hackers) >= 2 && (*serfs) >= 2)
+        if ((*hackers) >= 2 && (*serfs) >= 2)  // can we make 2 and 2 group?
         {
             (*hackers) -= 2;
             (*serfs) -= 2;
@@ -372,7 +377,7 @@ int waiting(sh_var *shvar, sem_t **sem)
    
             return 1;
         }
-        else if ((*hackers) == 4)
+        else if ((*hackers) == 4)   // hell yeah private boat for hackers
         {
             while ((*hackers) > 0)
             {
@@ -381,7 +386,7 @@ int waiting(sh_var *shvar, sem_t **sem)
             }
             return 1;
         }
-        else if ((*serfs) == 4)
+        else if ((*serfs) == 4)    // nice serfs private boat
         {
             while ((*serfs) > 0)
             {
@@ -438,12 +443,6 @@ void statusMsg(int id, int selector, status msg_num, sh_var *shvar)
     fflush(output_f);
 }
 
-/*
-void semFprintf(char *text)
-{
-
-}
-*/
 int randomN(int max)
 {
     return (max == 0 ? 0 : rand()%max);
@@ -460,28 +459,25 @@ void makeShVar(char *path, char id, int size, int rights, sh_var *shvar)
     key_t key;
     if ((key = ftok(path,id)) == -1)
         errexit("ftok");
-    if ((shvar->shmid = shmget(key, size, rights | IPC_CREAT)) == -1)
+    if ((shvar->shmid = shmget(key, size, rights | IPC_CREAT)) == -1)  // try if you can make shm
         errexit("shmget");
 }
 
 void attachShVar(sh_var *shvar)
 {
-    if ((shvar->data = shmat(shvar->shmid, NULL, 0)) == (void *) -1)
+    if ((shvar->data = shmat(shvar->shmid, NULL, 0)) == (void *) -1)  // try to attach shm
         errexit("shmat");
-    //printf("init: %lu\n",(long)shvar->data);
 }
 
 void dtShVar(sh_var *shvar)
 {
-    if ((shmdt(shvar->data)) == -1)
+    if ((shmdt(shvar->data)) == -1)  // try to deattach shm
         errexit("shmdt");
-    //printf("end: %lu\n",(long)shvar->data);
 }
 void removeShVar(sh_var *shvar)
 {
-    if ((shmctl(shvar->shmid,IPC_RMID, NULL)) == -1)
+    if ((shmctl(shvar->shmid,IPC_RMID, NULL)) == -1) // lets clear that mess
         errexit("shmctl");
-    //printf("rusim shmid %d\n",shvar->shmid);
 }
 
 
