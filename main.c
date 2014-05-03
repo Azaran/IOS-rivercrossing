@@ -21,7 +21,7 @@
 #include <limits.h>
 #include <time.h>
 #define OUT_FILE "./rivercrossing.out"
-#define SEMNUM 7 
+#define SEMNUM 8 
 
 typedef struct numbers{ //struct for shared data
     int count;
@@ -69,7 +69,7 @@ int main(int argc, char **argv)
     sem_t *sem[SEMNUM];
     FILE *file;
     srand(time(NULL));
-    char *sems[] = {"/xvecer18_file", "/xvecer18_platform", "/xvecer18_boat", "/xvecer18_hacker", "/xvecer18_serf","/xvecer18_captain", "/xvecer18_finish"};
+    char *sems[] = {"/xvecer18_file", "/xvecer18_platform", "/xvecer18_boat", "/xvecer18_hacker", "/xvecer18_serf","/xvecer18_captain", "/xvecer18_roles", "/xvecer18_finish"};
     for (i = 0; i < SEMNUM; i++)
         sem[i] = sem_open(sems[i], O_CREAT | O_EXCL, 0644, 0);
     if ((msg_code = outputMsg(argc, argv)) > 0)
@@ -159,30 +159,30 @@ void processH(int id, sem_t **sem, sh_var *shvar)
     attachShVar(shvar);
     int capt = 0;
     int i;
-    sem_wait(sem[1]);    // can I go on the platform?
-    sem_post(sem[1]);        
     
     sem_wait(sem[0]);
     statusMsg(id, 0, START, shvar); 
     sem_post(sem[0]);
 
+    sem_wait(sem[1]);    // can I go on the platform?
+    
     sem_wait(sem[0]);
     (shvar->data->hackers)++;
     statusMsg(id, 0, WFB, shvar); 
     
-    //`printf("Im over here hacker: %d : %d\n", id, capt); 
+    //printf("Im over here hacker: %d : %d\n", id, capt); 
     
     if ((capt = waiting(shvar, sem)) == 1) // when we can board lock platform and mark captain
     {
-        (shvar->data->boarding) = 0;
-        sem_wait(sem[1]);
+        shvar->data->boarding = 0;
     }
-    
+    else 
+        sem_post(sem[1]);        
+    //printf("Oh, I was wrong Im over here hacker: %d : %d\n", id, capt); 
     sem_post(sem[0]);
      
     sem_wait(sem[3]); // can I board as hacker?
     
-   // printf("Oh, I was wrong Im over here hacker: %d : %d\n", id, capt); 
     sem_wait(sem[0]);
     statusMsg(id, 0, BOARD, shvar); 
     (shvar->data->boarding)++;
@@ -190,7 +190,7 @@ void processH(int id, sem_t **sem, sh_var *shvar)
     if ((shvar->data->boarding) == 4)
         sem_post(sem[2]); 
     sem_wait(sem[2]); // everybody boarded? lets asign roles
-
+    
     sem_post(sem[2]); 
     
     if (capt == 1)
@@ -198,6 +198,8 @@ void processH(int id, sem_t **sem, sh_var *shvar)
         sem_wait(sem[0]);
         statusMsg(id, 0, CAPT, shvar); 
         sem_post(sem[0]);
+        for (i = 0; i<3; i++)
+            sem_wait(sem[6]);
         usleep(randomN(shvar->data->bdelay));
         sem_post(sem[5]);
     }
@@ -205,6 +207,7 @@ void processH(int id, sem_t **sem, sh_var *shvar)
     {
         sem_wait(sem[0]);
         statusMsg(id, 0, MEMB, shvar); 
+        sem_post(sem[6]);
         sem_post(sem[0]);
     }
     
@@ -216,11 +219,15 @@ void processH(int id, sem_t **sem, sh_var *shvar)
     (shvar->data->landed)++;
     sem_post(sem[0]);
     
-    sem_post(sem[1]);     // open plaftorm after landing
-    if (shvar->data->landed == 2*shvar->data->size_categ)
-        sem_post(sem[6]);
-    sem_wait(sem[6]);     // everybody here? Ok, lets finish
-    sem_post(sem[6]);
+    if (shvar->data->landed % 4 == 0) 
+    {
+      //  printf("So, Im here your loyal serf");
+        sem_post(sem[1]);     // open plaftorm after landing
+    }
+    if (shvar->data->landed == (2*shvar->data->size_categ))
+        sem_post(sem[7]);
+    sem_wait(sem[7]);     // everybody here? Ok, lets finish
+    sem_post(sem[7]);
     
     sem_wait(sem[0]);
     statusMsg(id, 0, FINISH, shvar); 
@@ -267,29 +274,29 @@ void processS(int id, sem_t **sem, sh_var *shvar)
     int capt = 0;
     int i;
 
-    sem_wait(sem[1]); // can I go on platform?
-    sem_post(sem[1]);        
     sem_wait(sem[0]);
     statusMsg(id, 1, START, shvar); 
     sem_post(sem[0]);
+    
+    sem_wait(sem[1]); // can I go on platform?
     
     sem_wait(sem[0]);
     (shvar->data->serfs)++;
     statusMsg(id, 1, WFB, shvar); 
     
-   // printf("Im over here serf: %d : %d\n", id, capt); 
+    //printf("Im over here serf: %d : %d\n", id, capt); 
 
     if ((capt = waiting(shvar, sem)) == 1) // when we can board lock platform and mark captain
     {
-        (shvar->data->boarding) = 0;
-        sem_wait(sem[1]);
+        shvar->data->boarding = 0;
     }
-
+    else
+        sem_post(sem[1]);        
     sem_post(sem[0]);
     
     sem_wait(sem[4]); // can I board as serf?
 
-   // printf("Oh, I was wrong Im over here serf: %d : %d\n", id, capt); 
+    //printf("Oh, I was wrong Im over here serf: %d : %d\n", id, capt); 
     sem_wait(sem[0]);
     (shvar->data->boarding)++;
     statusMsg(id, 1, BOARD, shvar); 
@@ -305,7 +312,9 @@ void processS(int id, sem_t **sem, sh_var *shvar)
     {
         sem_wait(sem[0]);
         statusMsg(id, 1, CAPT, shvar);
-        sem_wait(sem[0]);
+        sem_post(sem[0]);
+        for (i = 0; i<3; i++)
+            sem_wait(sem[6]);
         usleep(randomN(shvar->data->bdelay));
         sem_post(sem[5]);
     }
@@ -313,6 +322,7 @@ void processS(int id, sem_t **sem, sh_var *shvar)
     {
         sem_wait(sem[0]);
         statusMsg(id, 1, MEMB, shvar); 
+        sem_post(sem[6]);
         sem_post(sem[0]);
     }
     
@@ -323,13 +333,15 @@ void processS(int id, sem_t **sem, sh_var *shvar)
     statusMsg(id, 1, LAND, shvar); 
     (shvar->data->landed)++;
     sem_post(sem[0]);
-    
-    sem_post(sem[1]);     // open plaftorm after landing
-    
-    if (shvar->data->landed == 2*shvar->data->size_categ)
-        sem_post(sem[6]);
-    sem_wait(sem[6]);     // everybody here? Ok, lets finish
-    sem_post(sem[6]);
+    if (shvar->data->landed % 4 == 0) 
+    {
+      //  printf("So, Im here your loyal serf");
+        sem_post(sem[1]);     // open plaftorm after landing
+    }
+    if (shvar->data->landed == (2*shvar->data->size_categ))
+        sem_post(sem[7]);
+    sem_wait(sem[7]);     // everybody here? Ok, lets finish
+    sem_post(sem[7]);
     
     sem_wait(sem[0]);
     statusMsg(id, 1, FINISH, shvar); 
@@ -358,6 +370,7 @@ int waiting(sh_var *shvar, sem_t **sem)
             sem_post(sem[4]);
             sem_post(sem[4]);
    
+            return 1;
         }
         else if ((*hackers) == 4)
         {
@@ -366,6 +379,7 @@ int waiting(sh_var *shvar, sem_t **sem)
                 (*hackers)--;
                 sem_post(sem[3]);
             }
+            return 1;
         }
         else if ((*serfs) == 4)
         {
@@ -374,8 +388,10 @@ int waiting(sh_var *shvar, sem_t **sem)
                 (*serfs)--;
                 sem_post(sem[4]);
             }
+            return 1;
         }
-        return 1;
+        else
+            return 0;
     }
     else
         return 0;
