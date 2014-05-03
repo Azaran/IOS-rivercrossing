@@ -21,11 +21,18 @@
 #include <limits.h>
 #include <time.h>
 #define OUT_FILE "./rivercrossing.out"
+#define SEMNUM 7 
 
 typedef struct numbers{ //struct for shared data
     int count;
     int hackers;
     int serfs;
+    int boarding;    
+    int landed;      // how many people landed?
+    int size_categ; // how many people will come?
+    int hdelay;     //max time for making hacker
+    int sdelay;    // max time for making serf
+    int bdelay;    // boat crossing time
     FILE *file;
 } numbers;
 
@@ -38,17 +45,17 @@ typedef enum {
     START = 0,WFB,BOARD,CAPT,MEMB,LAND,FINISH
 } status;
 
-void processH(int hid, sem_t **sem, sh_var *shvar);
-void processS(int sid, sem_t **sem, sh_var *shvar);
-void catHackers(int ammount, int delay, sem_t **sem, sh_var *shvar);
-void catSerfs(int ammount, int delay, sem_t **sem, sh_var *shvar);
+void processH(int id, sem_t **sem, sh_var *shvar);
+void processS(int id, sem_t **sem, sh_var *shvar);
+void catHackers(sem_t **sem, sh_var *shvar);
+void catSerfs(sem_t **sem, sh_var *shvar);
 void errexit(char *func_err);
 void statusMsg(int id, int selector, status msg_num, sh_var *shvar);
-void captain(int id, int selector, sh_var *shvar);
+int waiting(sh_var *shvar, sem_t **sem);
 int verifyArg(int argc, char **argv);
 int outputMsg(int argc, char **argv);
 int randomN(int max);
-void initShVar(sh_var *shvar);
+void attachShVar(sh_var *shvar);
 void dtShVar(sh_var *shvar);
 void makeShVar(char *path, char id, int size, int rights, sh_var *shvar);
 void removeShVar(sh_var *shvar);
@@ -56,12 +63,15 @@ void removeShVar(sh_var *shvar);
 
 int main(int argc, char **argv)
 {
+    int i;
     int msg_code;
     int status[2];
-    sem_t *sem[2];
+    sem_t *sem[SEMNUM];
+    FILE *file;
     srand(time(NULL));
-    sem[0] = sem_open("/xvecer18_out0", O_CREAT | O_EXCL, 0644, 0);
-    sem[1] = sem_open("/xvecer18_out1", O_CREAT | O_EXCL, 0644, 0);
+    char *sems[] = {"/xvecer18_file", "/xvecer18_platform", "/xvecer18_boat", "/xvecer18_hacker", "/xvecer18_serf","/xvecer18_captain", "/xvecer18_finish"};
+    for (i = 0; i < SEMNUM; i++)
+        sem[i] = sem_open(sems[i], O_CREAT | O_EXCL, 0644, 0);
     if ((msg_code = outputMsg(argc, argv)) > 0)
         return 1;
     else if (msg_code < 0)
@@ -70,24 +80,31 @@ int main(int argc, char **argv)
     shvar.data = NULL;
     shvar.shmid = 0;
     makeShVar(argv[0], 'V', sizeof(numbers), 0600, &shvar);
-    initShVar(&shvar);
+    attachShVar(&shvar);
     shvar.data->count = 1;
     shvar.data->hackers = 0;
     shvar.data->serfs = 0;
-    shvar.data->file = fopen(OUT_FILE,"w");
+    shvar.data->landed = 0;
+    shvar.data->size_categ = atoi(argv[1]);
+    shvar.data->hdelay = atoi(argv[2]);
+    shvar.data->sdelay = atoi(argv[3]);
+    shvar.data->bdelay = atoi(argv[4]);
+    file  = fopen(OUT_FILE,"w");
+    shvar.data->file = file;
     pid_t child[2] = {1,1};
+    sem_post(sem[1]);
     child[0] = fork();
     
     if (child[0] == 0)
     {
-        catHackers(atoi(argv[1]), atoi(argv[2]), sem, &shvar);
+        catHackers(sem, &shvar);
         child[0]++;
     }    
     else
         child[1] = fork();
     
     if (child[1] == 0)
-        catSerfs(atoi(argv[1]), atoi(argv[3]), sem, &shvar);
+        catSerfs(sem, &shvar);
     else
     {
         waitpid(child[1],&status[1],0);
@@ -95,29 +112,31 @@ int main(int argc, char **argv)
     }
     dtShVar(&shvar);
     removeShVar(&shvar);
-    sem_close(sem[0]);
-    sem_close(sem[1]);
-    sem_unlink("/xvecer18_out0");
-    sem_unlink("/xvecer18_out1");
-    //fclose(shvar.data->file);
+    
+    for (i = 0; i < SEMNUM; i++)
+    {
+        sem_close(sem[i]);
+        sem_unlink(sems[i]);
+    }
+    fclose(file);
     return 0;
     
 }
 
-void catHackers(int ammount, int delay, sem_t **sem, sh_var *shvar)
+void catHackers(sem_t **sem, sh_var *shvar)
 {
     int h;
-    pid_t pidH[ammount]; 
-    int status[ammount];
+    pid_t pidH[shvar->data->size_categ]; 
+    int status[shvar->data->size_categ];
     int rantime; 
-    initShVar(shvar);
+    attachShVar(shvar);
     sem_post(sem[0]);
-    for (h=1; h <= ammount; h++)
+    for (h=1; h <= shvar->data->size_categ; h++)
     {
         pidH[h] = fork();
         if (pidH[h] > 0)
         {
-            rantime = randomN(delay);
+            rantime = randomN(shvar->data->hdelay);
       //      printf("H sleeping for %d\n",rantime);
             usleep(rantime);
         }
@@ -125,7 +144,7 @@ void catHackers(int ammount, int delay, sem_t **sem, sh_var *shvar)
             processH(h, sem, shvar);
     }
 
-    for (h=1; h <= ammount; h++)
+    for (; h >= 1; h--)
     {
         waitpid(pidH[h],&status[h],0);
     }
@@ -135,49 +154,97 @@ void catHackers(int ammount, int delay, sem_t **sem, sh_var *shvar)
     exit(0);
 }
 
-void processH(int hid, sem_t **sem, sh_var *shvar)
+void processH(int id, sem_t **sem, sh_var *shvar)
 {
-    initShVar(shvar);
-
-    sem_wait(sem[0]);
-    statusMsg(hid, 0, START, shvar); 
-    sem_post(sem[0]);
-
-    sem_wait(sem[0]);
-    ++(shvar->data->hackers);
-    statusMsg(hid, 0, WFB, shvar); 
-    sem_post(sem[0]);
+    attachShVar(shvar);
+    int capt = 0;
+    int i;
+    sem_wait(sem[1]);    // can I go on the platform?
+    sem_post(sem[1]);        
     
     sem_wait(sem[0]);
-    statusMsg(hid, 0, BOARD, shvar);
+    statusMsg(id, 0, START, shvar); 
+    sem_post(sem[0]);
+
+    sem_wait(sem[0]);
+    (shvar->data->hackers)++;
+    statusMsg(id, 0, WFB, shvar); 
+    
+    //`printf("Im over here hacker: %d : %d\n", id, capt); 
+    
+    if ((capt = waiting(shvar, sem)) == 1) // when we can board lock platform and mark captain
+    {
+        (shvar->data->boarding) = 0;
+        sem_wait(sem[1]);
+    }
+    
+    sem_post(sem[0]);
+     
+    sem_wait(sem[3]); // can I board as hacker?
+    
+   // printf("Oh, I was wrong Im over here hacker: %d : %d\n", id, capt); 
+    sem_wait(sem[0]);
+    statusMsg(id, 0, BOARD, shvar); 
+    (shvar->data->boarding)++;
+    sem_post(sem[0]);
+    if ((shvar->data->boarding) == 4)
+        sem_post(sem[2]); 
+    sem_wait(sem[2]); // everybody boarded? lets asign roles
+
+    sem_post(sem[2]); 
+    
+    if (capt == 1)
+    {
+        sem_wait(sem[0]);
+        statusMsg(id, 0, CAPT, shvar); 
+        sem_post(sem[0]);
+        usleep(randomN(shvar->data->bdelay));
+        sem_post(sem[5]);
+    }
+    else
+    {
+        sem_wait(sem[0]);
+        statusMsg(id, 0, MEMB, shvar); 
+        sem_post(sem[0]);
+    }
+    
+    sem_wait(sem[5]); // wait for the captain!
+    sem_post(sem[5]);
+
+    sem_wait(sem[0]);
+    statusMsg(id, 0, LAND, shvar); 
+    (shvar->data->landed)++;
     sem_post(sem[0]);
     
+    sem_post(sem[1]);     // open plaftorm after landing
+    if (shvar->data->landed == 2*shvar->data->size_categ)
+        sem_post(sem[6]);
+    sem_wait(sem[6]);     // everybody here? Ok, lets finish
+    sem_post(sem[6]);
+    
     sem_wait(sem[0]);
-    captain(hid, 0, shvar);
+    statusMsg(id, 0, FINISH, shvar); 
     sem_post(sem[0]);
-
-    sem_wait(sem[0]);
-    statusMsg(hid, 0, FINISH, shvar); 
-    sem_post(sem[0]);
-
-    sem_close(sem[0]);
+    
+    for (i = 0; i < SEMNUM; i++)
+        sem_close(sem[i]);
     dtShVar(shvar);
     exit(0);
 }
 
-void catSerfs(int ammount, int delay, sem_t **sem, sh_var *shvar)
+void catSerfs(sem_t **sem, sh_var *shvar)
 {
     int s;
-    pid_t pidS[ammount];
-    int status[ammount];
+    pid_t pidS[shvar->data->size_categ];
+    int status[shvar->data->size_categ];
     int rantime;
-    initShVar(shvar);
-    for (s=1; s <= ammount; s++)
+    attachShVar(shvar);
+    for (s=1; s <= shvar->data->size_categ; s++)
     {
         pidS[s] = fork();
         if (pidS[s] > 0)
         {
-            rantime = randomN(delay);
+            rantime = randomN(shvar->data->sdelay);
     //        printf("S sleeping for %d\n",rantime);
             usleep(rantime);
         }
@@ -185,7 +252,7 @@ void catSerfs(int ammount, int delay, sem_t **sem, sh_var *shvar)
             processS(s, sem, shvar);
     }
     
-    for (s=1; s <= ammount; s++)
+    for (; s >= 1; s--)
     {
         waitpid(pidS[s],&status[s],0);
     }
@@ -194,53 +261,124 @@ void catSerfs(int ammount, int delay, sem_t **sem, sh_var *shvar)
     exit(0);
 }
 
-void processS(int sid, sem_t **sem, sh_var *shvar)
+void processS(int id, sem_t **sem, sh_var *shvar)
 {
-    initShVar(shvar);
+    attachShVar(shvar);
+    int capt = 0;
+    int i;
 
+    sem_wait(sem[1]); // can I go on platform?
+    sem_post(sem[1]);        
     sem_wait(sem[0]);
-    statusMsg(sid, 1, START, shvar); 
-    sem_post(sem[0]);
-
-    sem_wait(sem[0]);
-    ++(shvar->data->serfs);
-    statusMsg(sid, 1, WFB, shvar); 
+    statusMsg(id, 1, START, shvar); 
     sem_post(sem[0]);
     
     sem_wait(sem[0]);
-    statusMsg(sid, 1, BOARD, shvar); 
+    (shvar->data->serfs)++;
+    statusMsg(id, 1, WFB, shvar); 
+    
+   // printf("Im over here serf: %d : %d\n", id, capt); 
+
+    if ((capt = waiting(shvar, sem)) == 1) // when we can board lock platform and mark captain
+    {
+        (shvar->data->boarding) = 0;
+        sem_wait(sem[1]);
+    }
+
     sem_post(sem[0]);
     
+    sem_wait(sem[4]); // can I board as serf?
+
+   // printf("Oh, I was wrong Im over here serf: %d : %d\n", id, capt); 
     sem_wait(sem[0]);
-    captain(sid, 1, shvar);
+    (shvar->data->boarding)++;
+    statusMsg(id, 1, BOARD, shvar); 
     sem_post(sem[0]);
+    if ((shvar->data->boarding) == 4)
+        sem_post(sem[2]); 
+    
+    sem_wait(sem[2]); // everybody boarded? lets asign roles
+        
+    sem_post(sem[2]); 
+
+    if (capt == 1)
+    {
+        sem_wait(sem[0]);
+        statusMsg(id, 1, CAPT, shvar);
+        sem_wait(sem[0]);
+        usleep(randomN(shvar->data->bdelay));
+        sem_post(sem[5]);
+    }
+    else
+    {
+        sem_wait(sem[0]);
+        statusMsg(id, 1, MEMB, shvar); 
+        sem_post(sem[0]);
+    }
+    
+    sem_wait(sem[5]); // wait for the captain!
+    sem_post(sem[5]);
 
     sem_wait(sem[0]);
-    statusMsg(sid, 1, FINISH, shvar); 
+    statusMsg(id, 1, LAND, shvar); 
+    (shvar->data->landed)++;
     sem_post(sem[0]);
     
-    sem_close(sem[0]);
+    sem_post(sem[1]);     // open plaftorm after landing
+    
+    if (shvar->data->landed == 2*shvar->data->size_categ)
+        sem_post(sem[6]);
+    sem_wait(sem[6]);     // everybody here? Ok, lets finish
+    sem_post(sem[6]);
+    
+    sem_wait(sem[0]);
+    statusMsg(id, 1, FINISH, shvar); 
+    sem_post(sem[0]);
+    
+    for (i = 0; i < SEMNUM; i++)
+        sem_close(sem[i]);
+ 
     dtShVar(shvar);
     exit(0);
 }
 
-void captain(int id, int selector, sh_var *shvar)
+int waiting(sh_var *shvar, sem_t **sem)
 {
     int *hackers = &shvar->data->hackers;
     int *serfs = &shvar->data->serfs;
     if (((*hackers) + (*serfs)) >= 4)
     {
-        statusMsg(id, selector, CAPT, shvar);
         if ((*hackers) >= 2 && (*serfs) >= 2)
         {
             (*hackers) -= 2;
             (*serfs) -= 2;
+            
+            sem_post(sem[3]);
+            sem_post(sem[3]);
+            sem_post(sem[4]);
+            sem_post(sem[4]);
+   
         }
-        else if ((*hackers) == 4 && selector == 0)
-            (*hackers) -= 4;
-        else if ((*serfs) == 4 && selector == 1)
-            (*serfs) -= 4;
+        else if ((*hackers) == 4)
+        {
+            while ((*hackers) > 0)
+            {
+                (*hackers)--;
+                sem_post(sem[3]);
+            }
+        }
+        else if ((*serfs) == 4)
+        {
+            while ((*serfs) > 0)
+            {
+                (*serfs)--;
+                sem_post(sem[4]);
+            }
+        }
+        return 1;
     }
+    else
+        return 0;
 }
 
 void statusMsg(int id, int selector, status msg_num, sh_var *shvar)
@@ -292,7 +430,7 @@ void semFprintf(char *text)
 */
 int randomN(int max)
 {
-    return (rand()%max);
+    return (max == 0 ? 0 : rand()%max);
 }
 
 void errexit(char *func_err)
@@ -310,7 +448,7 @@ void makeShVar(char *path, char id, int size, int rights, sh_var *shvar)
         errexit("shmget");
 }
 
-void initShVar(sh_var *shvar)
+void attachShVar(sh_var *shvar)
 {
     if ((shvar->data = shmat(shvar->shmid, NULL, 0)) == (void *) -1)
         errexit("shmat");
@@ -340,7 +478,7 @@ int outputMsg(int argc, char **argv)
                  "     P - number of members in each category (hackers, serfs)\n"
                  "     H - maximal time between creating of two hacker processes (in miliseconds), 0 - 5001\n"
                  "     S - maximal time between creating of two serf processes (in miliseconds), 0 - 5001\n"
-                 "     R - maximal time used by boat to reach other side of the river (in miliseconds), 0 - 5001\n"
+                 "     R - maximal time used by boat to reach other ide of the river (in miliseconds), 0 - 5001\n"
                  " All parameters are represented as integers!\n";
     int err_code;
     
