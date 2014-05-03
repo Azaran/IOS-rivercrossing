@@ -26,6 +26,7 @@ typedef struct numbers{ //struct for shared data
     int count;
     int hackers;
     int serfs;
+    FILE *file;
 } numbers;
 
 typedef struct sh_var{ // struct for saving id of shvar and pointer to data
@@ -33,13 +34,17 @@ typedef struct sh_var{ // struct for saving id of shvar and pointer to data
     numbers *data;
 } sh_var;
 
-
+typedef enum {
+    START = 0,WFB,BOARD,CAPT,MEMB,LAND,FINISH
+} status;
 
 void processH(int hid, sem_t **sem, sh_var *shvar);
 void processS(int sid, sem_t **sem, sh_var *shvar);
 void catHackers(int ammount, int delay, sem_t **sem, sh_var *shvar);
 void catSerfs(int ammount, int delay, sem_t **sem, sh_var *shvar);
 void errexit(char *func_err);
+void statusMsg(int id, int selector, status msg_num, sh_var *shvar);
+void captain(int id, int selector, sh_var *shvar);
 int verifyArg(int argc, char **argv);
 int outputMsg(int argc, char **argv);
 int randomN(int max);
@@ -53,8 +58,6 @@ int main(int argc, char **argv)
 {
     int msg_code;
     int status[2];
-    FILE *output_f = fopen(OUT_FILE,"w");
-    fclose(output_f);
     sem_t *sem[2];
     srand(time(NULL));
     sem[0] = sem_open("/xvecer18_out0", O_CREAT | O_EXCL, 0644, 0);
@@ -71,6 +74,7 @@ int main(int argc, char **argv)
     shvar.data->count = 1;
     shvar.data->hackers = 0;
     shvar.data->serfs = 0;
+    shvar.data->file= fopen(OUT_FILE,"w");
     pid_t child[2] = {1,1};
     child[0] = fork();
     
@@ -95,6 +99,7 @@ int main(int argc, char **argv)
     sem_close(sem[1]);
     sem_unlink("/xvecer18_out0");
     sem_unlink("/xvecer18_out1");
+    fclose(shvar.data->file);
     return 0;
     
 }
@@ -132,30 +137,12 @@ void catHackers(int ammount, int delay, sem_t **sem, sh_var *shvar)
 
 void processH(int hid, sem_t **sem, sh_var *shvar)
 {
-    FILE *output_f;
     sem_wait(sem[0]);
     initShVar(shvar);
-    output_f = fopen(OUT_FILE,"a");
-    fprintf(output_f,"%d: hacker : %d : started\n", (shvar->data->count)++,hid);
-    fclose(output_f);
+    statusMsg(hid, 0, START, shvar); 
     sem_post(sem[0]);
     sem_wait(sem[0]);
-    output_f = fopen(OUT_FILE,"a");
-    fprintf(output_f,"%d: hacker : %d : waiting for boarding : %d : %d\n",(shvar->data->count)++,hid,++(shvar->data->hackers),(shvar->data->serfs));
-    fclose(output_f);
-    if ((shvar->data->hackers + shvar->data->serfs) >= 4)
-    {
-        output_f = fopen(OUT_FILE,"a");
-        fprintf(output_f,"%d: hacker : %d : captain\n",(shvar->data->count)++,hid);
-        fclose(output_f);
-        if (shvar->data->hackers >= 2 && shvar->data->serfs >= 2)
-        {
-            shvar->data->hackers -= 2;
-            shvar->data->serfs -= 2;
-        }
-        else if (shvar->data->hackers == 4)
-            shvar->data->hackers -= 4;
-    }
+    captain(hid, 0, shvar);
     sem_post(sem[0]);
     sem_close(sem[0]);
     dtShVar(shvar);
@@ -193,35 +180,81 @@ void catSerfs(int ammount, int delay, sem_t **sem, sh_var *shvar)
 
 void processS(int sid, sem_t **sem, sh_var *shvar)
 {
-    FILE *output_f;
     initShVar(shvar);
     sem_wait(sem[0]);
-    output_f = fopen(OUT_FILE,"a");
-    fprintf(output_f,"%d: serf : %d : started\n",(shvar->data->count)++,sid);
-    fclose(output_f);
+    statusMsg(sid, 1, START, shvar); 
     sem_post(sem[0]);
     sem_wait(sem[0]);
-    output_f = fopen(OUT_FILE,"a");
-    fprintf(output_f,"%d: serf : %d : waiting for boarding : %d : %d\n",(shvar->data->count)++,sid,(shvar->data->hackers),++(shvar->data->serfs));
-    fclose(output_f);
-    if ((shvar->data->hackers + shvar->data->serfs) >= 4)
-    {
-        output_f = fopen(OUT_FILE,"a");
-        fprintf(output_f,"%d: serf : %d : captain\n",(shvar->data->count)++,sid);
-        fclose(output_f);
-        if (shvar->data->hackers >= 2 && shvar->data->serfs >= 2)
-        {
-            shvar->data->hackers -= 2;
-            shvar->data->serfs -= 2;
-        }
-        else if (shvar->data->serfs == 4)
-            shvar->data->serfs -= 4;
-    }
+    captain(sid, 1, shvar);
     sem_post(sem[0]);
     sem_close(sem[0]);
     dtShVar(shvar);
     exit(0);
 }
+
+void captain(int id, int selector, sh_var *shvar)
+{
+    int hackers = shvar->data->hackers;
+    int serfs = shvar->data->serfs;
+    int count = shvar->data->count;
+    if (((hackers) + (serfs)) >= 4)
+    {
+        statusMsg(id, selector, CAPT, shvar);
+        (count)++;
+        if ((hackers) >= 2 && (serfs) >= 2)
+        {
+            (hackers) -= 2;
+            (serfs) -= 2;
+        }
+        else if ((hackers) == 4 && selector == 0)
+            (hackers) -= 4;
+        else if ((serfs) == 4 && selector == 1)
+            (serfs) -= 4;
+    }
+}
+
+void statusMsg(int id, int selector, status msg_num, sh_var *shvar)
+{
+    int no1 = shvar->data->hackers;
+    int no2 = shvar->data->serfs;
+    int count = shvar->data->count;
+    FILE *output_f = shvar->data->file;
+    char *cat = (selector == 1 ? "serf" : "hacker");
+    
+    switch (msg_num)
+    {
+        case 0 : {
+                fprintf(output_f, "%d: %s : %d : started\n", count, cat, id); 
+                break;
+            }
+        case 1 : {
+                fprintf(output_f, "%d: %s : %d : waiting for boarding : %d : %d\n", count, cat, id, no1, no2);
+                break;
+            }
+        case 2 : {
+                fprintf(output_f, "%d: %s : %d : boarding : %d : %d\n", count, cat, id, no1, no2);
+                break;}
+        case 3 : {
+                
+                fprintf(output_f, "%d: %s : %d : member\n", count, cat, id);
+                break;}
+        case 4 : {
+                fprintf(output_f, "%d: %s : %d : captain\n", count, cat, id);
+                break;
+            }
+        case 5 : {
+                fprintf(output_f, "%d: %s : %d : landing : %d : %d\n", count, cat, id, no1, no2);
+                break;
+            }
+        case 6 : {
+                fprintf(output_f, "%d: %s : %d : finished\n", count, cat, id); 
+                break;
+            }
+    break;
+    }
+    fclose(output_f);
+}
+
 /*
 void semFprintf(char *text)
 {
