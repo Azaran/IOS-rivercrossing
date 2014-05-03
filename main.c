@@ -74,7 +74,7 @@ int main(int argc, char **argv)
     shvar.data->count = 1;
     shvar.data->hackers = 0;
     shvar.data->serfs = 0;
-    shvar.data->file= fopen(OUT_FILE,"w");
+    shvar.data->file = fopen(OUT_FILE,"w");
     pid_t child[2] = {1,1};
     child[0] = fork();
     
@@ -99,7 +99,7 @@ int main(int argc, char **argv)
     sem_close(sem[1]);
     sem_unlink("/xvecer18_out0");
     sem_unlink("/xvecer18_out1");
-    fclose(shvar.data->file);
+    //fclose(shvar.data->file);
     return 0;
     
 }
@@ -137,13 +137,29 @@ void catHackers(int ammount, int delay, sem_t **sem, sh_var *shvar)
 
 void processH(int hid, sem_t **sem, sh_var *shvar)
 {
-    sem_wait(sem[0]);
     initShVar(shvar);
+
+    sem_wait(sem[0]);
     statusMsg(hid, 0, START, shvar); 
     sem_post(sem[0]);
+
+    sem_wait(sem[0]);
+    ++(shvar->data->hackers);
+    statusMsg(hid, 0, WFB, shvar); 
+    sem_post(sem[0]);
+    
+    sem_wait(sem[0]);
+    statusMsg(hid, 0, BOARD, shvar);
+    sem_post(sem[0]);
+    
     sem_wait(sem[0]);
     captain(hid, 0, shvar);
     sem_post(sem[0]);
+
+    sem_wait(sem[0]);
+    statusMsg(hid, 0, FINISH, shvar); 
+    sem_post(sem[0]);
+
     sem_close(sem[0]);
     dtShVar(shvar);
     exit(0);
@@ -181,12 +197,28 @@ void catSerfs(int ammount, int delay, sem_t **sem, sh_var *shvar)
 void processS(int sid, sem_t **sem, sh_var *shvar)
 {
     initShVar(shvar);
+
     sem_wait(sem[0]);
     statusMsg(sid, 1, START, shvar); 
     sem_post(sem[0]);
+
+    sem_wait(sem[0]);
+    ++(shvar->data->serfs);
+    statusMsg(sid, 1, WFB, shvar); 
+    sem_post(sem[0]);
+    
+    sem_wait(sem[0]);
+    statusMsg(sid, 1, BOARD, shvar); 
+    sem_post(sem[0]);
+    
     sem_wait(sem[0]);
     captain(sid, 1, shvar);
     sem_post(sem[0]);
+
+    sem_wait(sem[0]);
+    statusMsg(sid, 1, FINISH, shvar); 
+    sem_post(sem[0]);
+    
     sem_close(sem[0]);
     dtShVar(shvar);
     exit(0);
@@ -194,22 +226,20 @@ void processS(int sid, sem_t **sem, sh_var *shvar)
 
 void captain(int id, int selector, sh_var *shvar)
 {
-    int hackers = shvar->data->hackers;
-    int serfs = shvar->data->serfs;
-    int count = shvar->data->count;
-    if (((hackers) + (serfs)) >= 4)
+    int *hackers = &shvar->data->hackers;
+    int *serfs = &shvar->data->serfs;
+    if (((*hackers) + (*serfs)) >= 4)
     {
         statusMsg(id, selector, CAPT, shvar);
-        (count)++;
-        if ((hackers) >= 2 && (serfs) >= 2)
+        if ((*hackers) >= 2 && (*serfs) >= 2)
         {
-            (hackers) -= 2;
-            (serfs) -= 2;
+            (*hackers) -= 2;
+            (*serfs) -= 2;
         }
-        else if ((hackers) == 4 && selector == 0)
-            (hackers) -= 4;
-        else if ((serfs) == 4 && selector == 1)
-            (serfs) -= 4;
+        else if ((*hackers) == 4 && selector == 0)
+            (*hackers) -= 4;
+        else if ((*serfs) == 4 && selector == 1)
+            (*serfs) -= 4;
     }
 }
 
@@ -217,7 +247,7 @@ void statusMsg(int id, int selector, status msg_num, sh_var *shvar)
 {
     int no1 = shvar->data->hackers;
     int no2 = shvar->data->serfs;
-    int count = shvar->data->count;
+    int count = shvar->data->count++;
     FILE *output_f = shvar->data->file;
     char *cat = (selector == 1 ? "serf" : "hacker");
     
@@ -235,13 +265,12 @@ void statusMsg(int id, int selector, status msg_num, sh_var *shvar)
                 fprintf(output_f, "%d: %s : %d : boarding : %d : %d\n", count, cat, id, no1, no2);
                 break;}
         case 3 : {
-                
-                fprintf(output_f, "%d: %s : %d : member\n", count, cat, id);
-                break;}
-        case 4 : {
                 fprintf(output_f, "%d: %s : %d : captain\n", count, cat, id);
                 break;
             }
+        case 4 : {
+                fprintf(output_f, "%d: %s : %d : member\n", count, cat, id);
+                break;}
         case 5 : {
                 fprintf(output_f, "%d: %s : %d : landing : %d : %d\n", count, cat, id, no1, no2);
                 break;
@@ -252,7 +281,7 @@ void statusMsg(int id, int selector, status msg_num, sh_var *shvar)
             }
     break;
     }
-    fclose(output_f);
+    fflush(output_f);
 }
 
 /*
